@@ -55,7 +55,7 @@ def install_and_import():
             importlib.import_module(module_name)
             print(f"✅ {module_name} is already ready.")
         except ImportError:
-            print(f"⚠️ {module_name} manque. Installation of {package_name} in progress...")
+            print(f"⚠️ {module_name} is missing. Installation of {package_name} in progress...")
             subprocess.check_call([sys.executable, "-m", "pip", "install", package_name])
             print(f"{package_name} installed successfully !")
 
@@ -101,20 +101,22 @@ A reference DAPI image is extracted from the MACSima system and then exported in
 ```python
 # Load the TIFF image
 image = cv2.imread("[image.tiff]")
+if image is None:
+    raise FileNotFoundError("Image TIFF not found or unreadable")
 
 # Temporary folder for extracting ROIs
 extract_folder = "roi_dezip"
 
 # Extract the files from the ZIP archive
-with zipfile.ZipFile("[SetROIs.zip]", "r") as zip_ref:
+with zipfile.ZipFile("[RoiSet].zip", "r") as zip_ref:
     zip_ref.extractall(extract_folder)
+
 roi_files = [f for f in os.listdir(extract_folder) if f.endswith(".roi")]
-all_rois = {}
+roi_data = {}
 for roi_file in roi_files:
     roi_path = os.path.join(extract_folder, roi_file)
-    roi_data = read_roi_file(roi_path)
-    all_rois.update(roi_data)
-print(f"Number of ROIs charged : {len(all_rois)}")
+    roi_data.update(read_roi_file(roi_path))
+print(f"Number of ROIs charged : {len(roi_data)}")
 ```
 Be sure to check the number of imported ROIs
 
@@ -190,17 +192,16 @@ First, we import the automatic segmentations `df_auto` and the manual segmentati
 We apply normalization using `MinMaxScaler()` and construct a comparison dataframe `df_comparison`. The choice of `MinMaxScaler` is based on the assumption of prior data cleaning under MACSiQView, guaranteeing the absence of extreme outliers and allowing direct comparison on a normalized scale [0, 1] which is more readable for morphological analysis.
 
 ```python
-# Manual file (from Fiji)
-df_manual = pd.read_csv("[Segmentation_manuelle].csv")
+df_manual = pd.read_csv("[Manual_segmentation].csv")
 
-# Automatic files (from MACSiQView)
-df_auto1 = pd.read_csv("[Mask_3_Single_Cell].csv")
-df_auto2 = pd.read_csv("[Mask_3_Tissue.csv]")
-df_auto3 = pd.read_csv("[Mask_4_Import_mask].csv")
-df_auto4 = pd.read_csv("[Mask_4_Single_Cell].csv")
-df_auto5 = pd.read_csv("[Mask_4_Tissue].csv")
+df_autos = [
+    pd.read_csv("Mask_3_Single_Cell.csv"),
+    pd.read_csv("Mask_3_Tissue.csv"),
+    pd.read_csv("Mask_4_Import_mask.csv"),
+    pd.read_csv("Mask_4_Single_Cell.csv"),
+    pd.read_csv("Mask_4_Tissue.csv")
+]
 
-# Rename the columns
 df_manual = df_manual.rename(columns={
     'Area': 'area',
     'Perim.': 'perimeter',
@@ -210,13 +211,12 @@ df_manual = df_manual.rename(columns={
     'Mean': 'mean_intensity'
 })
 
-# Keep only the specified columns
 columns_to_keep = ['area', 'perimeter', 'centroid_x', 'centroid_y', 'feret', 'mean_intensity']
 df_manual = df_manual[columns_to_keep]
+
 print("Before normalization :")
 print(df_manual.head(), "\n")
 
-# Adaptation of columns in automatic segmentation files
 def rename_auto(df):
     return df.rename(columns={
         'Nucleus Size': 'area',
@@ -225,38 +225,23 @@ def rename_auto(df):
         'Nuc Y': 'centroid_y',
         'Nucleus Feret Diameter Max': 'feret',
         'Nucleus DNA Mean': 'mean_intensity'
-    })
-df_auto1 = rename_auto(df_auto1)
-df_auto2 = rename_auto(df_auto2)
-df_auto3 = rename_auto(df_auto3)
-df_auto4 = rename_auto(df_auto4)
-df_auto5 = rename_auto(df_auto5)
+    })[columns_to_keep]
+
+df_autos = [rename_auto(df) for df in df_autos]
 
 scaler = MinMaxScaler()
-
-# Normalize the numeric columns
 df_manual[columns_to_keep] = scaler.fit_transform(df_manual[columns_to_keep])
-df_auto1[columns_to_keep] = scaler.fit_transform(df_auto1[columns_to_keep])
-df_auto2[columns_to_keep] = scaler.fit_transform(df_auto2[columns_to_keep])
-df_auto3[columns_to_keep] = scaler.fit_transform(df_auto3[columns_to_keep])
-df_auto4[columns_to_keep] = scaler.fit_transform(df_auto4[columns_to_keep])
-df_auto5[columns_to_keep] = scaler.fit_transform(df_auto5[columns_to_keep])
+for df_auto in df_autos:
+    df_auto[columns_to_keep] = scaler.transform(df_auto[columns_to_keep])
 
 print("After normalization :")
 print(df_manual.head())
-print(df_auto1.head())
+print(df_autos[0].head())
 
-df_comparison = df_manual[['area', 'perimeter', 'centroid_x', 'centroid_y', 'feret', 'mean_intensity']].copy()
-
-# Added automatic segmentation
-for i, df_auto in enumerate([df_auto1, df_auto2, df_auto3, df_auto4, df_auto5], start=1):
-    suffix = f'_auto{i}'
-    df_comparison[f'area{suffix}'] = df_auto['area']
-    df_comparison[f'perimeter{suffix}'] = df_auto['perimeter']
-    df_comparison[f'centroid_x{suffix}'] = df_auto['centroid_x']
-    df_comparison[f'centroid_y{suffix}'] = df_auto['centroid_y']
-    df_comparison[f'feret{suffix}'] = df_auto['feret']
-    df_comparison[f'mean_intensity{suffix}'] = df_auto['mean_intensity']
+df_comparison = df_manual[columns_to_keep].copy()
+for i, df_auto in enumerate(df_autos, start=1):
+    for col in columns_to_keep:
+        df_comparison[f'{col}_auto{i}'] = df_auto[col]
 ```
 
 
@@ -272,28 +257,29 @@ By analyzing the parameters, the script directly informs the nearest segmentatio
 ```python
 # Correspondence for new names
 legend_mapping = {
-    'Auto1': 'Mask 3 en Single Cell',
-    'Auto2': 'Mask 3 en Tissue',
-    'Auto3': 'Mask 4 en Import Mask',
-    'Auto4': 'Mask 4 en Single Cell',
-    'Auto5': 'Mask 4 en Tissue'
+    f'Auto{i+1}': name for i, name in enumerate([
+        'Mask 3 - Single Cell',
+        'Mask 3 - Tissue',
+        'Mask 4 - Import Mask',
+        'Mask 4 - Single Cell',
+        'Mask 4 - Tissue'
+    ])
 }
 
 # Calculates its Kolmogorov-Smirnov distances for each parameter
-distances = {}
-for column in columns_to_keep:
-    distances[column] = []
-    for df_auto in [df_auto1, df_auto2, df_auto3, df_auto4, df_auto5]:
-        ks_stat, _ = ks_2samp(df_manual[column], df_auto[column])
-        distances[column].append(ks_stat)
+distances = {
+    column: [ks_2samp(df_manual[column], df_auto[column])[0] for df_auto in df_autos]
+    for column in columns_to_keep
+}
 
-distances_df = pd.DataFrame(distances, index=['Auto1', 'Auto2', 'Auto3', 'Auto4', 'Auto5'])
+distances_df = pd.DataFrame(distances, index=list(legend_mapping.keys()))
 distances_df['Mean Distance'] = distances_df.mean(axis=1)
-print("Average distances from Kolmogorov-Smirnov for each df_auto :")
+
+print("Average Kolmogorov-Smirnov distances for each segmentation :")
 print(distances_df['Mean Distance'])
 
 closest_auto = distances_df['Mean Distance'].idxmin()
-print(f"\nThe df_auto closest to df_manual is : {legend_mapping[closest_auto]}")
+print(f"\nThe segmentation closest to df_manual is : {legend_mapping[closest_auto]}")
 ```
 
 ### 2.c Visualization
@@ -320,18 +306,25 @@ plt.show()
 ```
 We also visualize density curves (KDE) to compare the shape of the distributions.
 ```python
+
+df_manual_kde = pd.DataFrame(
+    MinMaxScaler().fit_transform(df_manual[columns_to_keep]),
+    columns=columns_to_keep
+)
+df_autos_kde = [
+    pd.DataFrame(MinMaxScaler().fit_transform(df[columns_to_keep]), columns=columns_to_keep)
+    for df in df_autos
+]
+
+# Construction of df_comparison_kde
+df_comparison_kde = df_manual_kde[columns_to_keep].copy()
+for i, df_auto in enumerate(df_autos_kde, start=1):
+    for col in columns_to_keep:
+        df_comparison_kde[f'{col}_auto{i}'] = df_auto[col]
+
+# KDE plot
 plt.style.use('default')
 params = ['area', 'perimeter', 'feret', 'mean_intensity']
-
-# Key-adapted mapping
-legend_mapping = {
-    'auto1': 'Mask 3 en Single Cell',
-    'auto2': 'Mask 3 en Tissue',
-    'auto3': 'Mask 4 en Import Mask',
-    'auto4': 'Mask 4 en Single Cell',
-    'auto5': 'Mask 4 en Tissue',
-    'manuel': 'Référence Manuelle'
-}
 
 fig, axes = plt.subplots(2, 2, figsize=(18, 10))
 fig.patch.set_facecolor('white')
@@ -340,28 +333,30 @@ axes = axes.flatten()
 for idx, param in enumerate(params):
     ax = axes[idx]
     ax.set_facecolor('white')
-    for i in range(1, 6):
-        key = f'auto{i}'
-        colname = f'{param}_{key}'
-        if colname in df_comparison.columns:
-            sns.kdeplot(df_comparison[colname], label=legend_mapping[key], linewidth=2, ax=ax)
-        else:
-            print(f"Missing column : {colname}")
 
-# Checking if the manual column exists
-    if param in df_comparison.columns:
-        sns.kdeplot(df_comparison[param], label=legend_mapping['manuel'], color='cyan', linestyle='--', linewidth=2, ax=ax)
+    for i in range(1, 6):
+        key = f'Auto{i}'
+        colname = f'{param}_auto{i}'
+        if colname in df_comparison_kde.columns:
+            sns.kdeplot(df_comparison_kde[colname], label=legend_mapping[key], linewidth=2, ax=ax)
+        else:
+            raise KeyError(f"Missing column in df_comparison_kde : {colname}")
+
+    if param in df_comparison_kde.columns:
+        sns.kdeplot(df_comparison_kde[param], label='Manual reference', color='cyan', linestyle='--', linewidth=2, ax=ax)
     else:
-        print(f"Missing manual column : {param}")
+        raise KeyError(f"Missing manual column : {param}")
+
     ax.set_title(f'Comparative Distribution - {param}')
     ax.set_xlabel('Normalized Value')
     ax.set_ylabel('Density')
     ax.grid(True, linestyle='--', alpha=0.6)
 
-# Legend
 handles, labels = axes[0].get_legend_handles_labels()
 fig.legend(handles, labels, title='Segmentation', loc='upper center', ncol=3)
+
 plt.tight_layout(rect=[0, 0, 1, 0.93])
+fig.savefig('kde_comparative_distributions.png', format='png', facecolor='white')
 plt.show()
 ```
 
@@ -385,47 +380,43 @@ Once the columns are sorted and the data normalized (this is mandatory), we use 
 
 To verify sensitivity to the contamination parameter, the isolation model is run on different contamination values. For each value, the percentage of test cells classified as "OK" is checked.
 
+We import the reference dataset df_ref and the test dataset df_test. We verify that all 14 morphological features are present in both files. The data are then normalized using StandardScaler fit is applied only to X_ref, while transform is applied to X_test, ensuring that the reference scale remains that of the manual segmentation.
+
 ```python 
-# Loading files and selecting columns
-df_ref = pd.read_csv("Ref")
-df_test = pd.read_csv("Test.csv")
+import warnings
+warnings.filterwarnings("ignore")
+
+df_ref = pd.read_csv("Segmentation(1).csv")
+df_test = pd.read_csv("Segmentation_EH3524.csv")
+
 df_ref.columns = df_ref.columns.str.strip()
 df_test.columns = df_test.columns.str.strip()
+
 features_to_use = [
-    "Cell Bbox X Size", "Cell Bbox Y Size", "Cell Shape Circle Like", "Cell Shape Ellipse Like", 
-    "Cell Shape Elongation", "Cell Shape Square Like", "Cell Shape Triangle Like", 
+    "Cell Bbox X Size", "Cell Bbox Y Size", "Cell Shape Circle Like", "Cell Shape Ellipse Like",
+    "Cell Shape Elongation", "Cell Shape Square Like", "Cell Shape Triangle Like",
     "Cell Size", "Nucleus Size", "Nucleus Roundness", "Nucleus Convexity", "Cell Convexity",
     "Quality Cell In-Focus", "Quality Nuclear Segmentation"
 ]
 
-# Checking for missing columns
 missing = [col for col in features_to_use if col not in df_ref.columns or col not in df_test.columns]
 if missing:
-    raise ValueError(f"❌ Missing columns in the files : {missing}")
+    raise ValueError(f"Missing columns in files : {missing}")
 
 X_ref = df_ref[features_to_use].dropna()
 X_test = df_test[features_to_use].dropna()
 df_test_clean = df_test.loc[X_test.index].copy()
+
 scaler = StandardScaler()
 X_ref_scaled = scaler.fit_transform(X_ref)
 X_test_scaled = scaler.transform(X_test)
-```
-```python
-best_contamination = 0.10
-model = IsolationForest(contamination=best_contamination, random_state=42)
-model.fit(X_ref_scaled)
-preds = model.predict(X_test_scaled)
-df_test_clean["Segmentation_OK"] = preds
-nb_total = len(preds)
-nb_valides = (preds == 1).sum()
-pourcentage = nb_valides / nb_total * 100
 
-print(f"\n✅ Result with contamination={best_contamination:.2f} :")
-print(f"{nb_valides} / {nb_total} cells considered to be well segmented ({pourcentage:.2f}%)")
+print(f"✅ Reference : {len(X_ref)} cells · Test : {len(X_test)} cells")
 ```
-
+Before setting the contamination parameter, we assess the model's sensitivity by running the Isolation Forest across a range of contamination values (0.01 → 0.20). For each value, we examine the percentage of test cells classified as "OK." This approach helps identify a contamination level that is biologically meaningful and consistent with the data.
 
 ```python
+# Sensitivity analysis choosing best contamination
 contamination_values = [0.01, 0.05, 0.10, 0.15, 0.20]
 ok_percentages = []
 
@@ -436,13 +427,53 @@ for c in contamination_values:
     ok_percent = (preds == 1).sum() / len(preds) * 100
     ok_percentages.append(ok_percent)
 
-plt.plot(contamination_values, ok_percentages, marker='o')
+plt.figure(figsize=(8, 4))
+plt.plot(contamination_values, ok_percentages, marker='o', color='steelblue')
 plt.xlabel("Contamination rate")
-plt.ylabel("% of well-segmented cells")
-plt.title("'Contamination' effect on the detection of correct segmentations")
-plt.grid(True)
+plt.ylabel("% well-segmented cells")
+plt.title("Contamination sensitivity analysis")
+plt.grid(True, linestyle='--', alpha=0.6)
 plt.tight_layout()
+plt.savefig('contamination_sensitivity.png', format='png')
 plt.show()
+
+print("Contamination · % OK")
+for c, pct in zip(contamination_values, ok_percentages):
+    print(f"  {c:.2f} → {pct:.1f}%")
+```
+Once the contamination value has been selected, the final model is trained exclusively on X_ref_scaled. In addition to the -1/+1 labels, we retrieve a continuous anomaly score using decision_function — the more negative the score, the more abnormal the cell is considered. The results are then exported to segmentation_test_annotated.csv.
+
+```python
+# Final model with chosen contamination
+best_contamination = 0.10
+
+model = IsolationForest(contamination=best_contamination, random_state=42)
+model.fit(X_ref_scaled)
+preds = model.predict(X_test_scaled)
+scores = model.decision_function(X_test_scaled)
+
+df_test_clean["Segmentation_OK"] = preds
+df_test_clean["Anomaly_Score"] = scores
+
+nb_total = len(preds)
+nb_valides = (preds == 1).sum()
+pourcentage = nb_valides / nb_total * 100
+
+print(f"\n✅ Result with contamination={best_contamination:.2f} :")
+print(f"{nb_valides} / {nb_total} cells considered well-segmented ({pourcentage:.2f}%)")
+
+# Anomaly score distribution
+plt.figure(figsize=(10, 4))
+plt.hist(scores, bins=50, color='steelblue', edgecolor='white')
+plt.axvline(x=0, color='red', linestyle='--', linewidth=2, label='Decision threshold')
+plt.xlabel('Anomaly Score')
+plt.ylabel('Count')
+plt.title('Distribution of Isolation Forest Anomaly Scores')
+plt.legend()
+plt.tight_layout()
+plt.savefig('anomaly_scores_distribution.png', format='png')
+plt.show()
+
 df_test_clean.to_csv("segmentation_test_annotated.csv", index=False)
 print("💾 Result saved in : segmentation_test_annotated.csv")
 ```
@@ -540,7 +571,7 @@ We utilize the sklearn.ensemble.IsolationForest function, which is already parti
 The final step of this protocol consists of moving beyond single-image validation to build a robust reference model. Currently, our analysis relies on a manually segmented image; however, tissue diversity necessitates a broader database. By compiling manual segmentations from multiple tissue sections, we can build a massive training dataset. This dataset will be used to train a Deep Learning model specifically tailored to our acquisition conditions. The workflow thus becomes cyclic: each new image is validated by the Isolation Forest and corrected by a human expert. The more varied cellular structures the model encounters, the greater its generalization capacity becomes, thereby reducing the need for manual correction. Ultimately, this self-learning model standardizes segmentation quality across all unit projects, guaranteeing total reproducibility, regardless of the operator or the biological variability of the tissue.
 
 <div style="border: 1px solid #fff200; border-radius: 10px; padding: 20px; background-color: rgba(234, 255, 0, 0.1); color: #000000;">
-We no longer use CSV files but rather models trained on pixels. Functions<strong>cellpose.models.CellposeModel</strong> or <strong>standist.models.StarDist2D</strong> can be used. This requires ROIs transformed into binary masks
+We no longer use CSV files but rather models trained on pixels. Functions<strong>cellpose.models.CellposeModel</strong> or <strong>stardist.models.StarDist2D</strong> can be used. This requires ROIs transformed into binary masks
 </div>
 <br>
 To go further, it will be necessary to incorporate tissue morphology into our model. In this way, we can weight our analysis by forcing the algorithm to assign a higher statistical weight to reference images originating from the same organ. With each new analysis of an unknown tissue, the manually validated segmentations are labeled and integrated into the library. The system thus enriches itself organically, filling its own gaps as research projects progress.
