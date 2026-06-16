@@ -1,0 +1,46 @@
+# Jupyter
+.ipynb_checkpoints/
+*.ipynb_checkpoints
+
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+*.egg-info/
+dist/
+build/
+*.egg
+
+# Données (ne jamais pousser)
+*.csv
+*.xlsx
+*.tsv
+*.tif
+*.tiff
+*.zip
+*.roi
+data/
+
+# Dossiers générés par les notebooks
+roi_dezip/
+
+# Environnements virtuels
+.venv/
+venv/
+env/
+
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+
+# IDE
+.vscode/
+.idea/
+
+# Outputs générés (sauf figures/)
+*.pdf
+*.svg
+*.png
+!**/figures/*.png
