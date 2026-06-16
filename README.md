@@ -38,7 +38,7 @@ The workflow is structured into two main components: segmentation quality contro
 
 > **Problem:** How can the reliability of automated segmentation in biological tissues be quantitatively assessed?
 
-This module, detailed in [`Test of segmentation.md`](Test%20of%20segmentation.md), includes:
+This module, detailed in [`Test of segmentation.md`](protocols/Test%20of%20segmentation.md), includes:
 
 - **Standardization**: Conversion of complex ROI structures (Fiji) into programmatically usable binary masks.  
 - **Fidelity Analysis**: Comparative evaluation using the **Kolmogorov–Smirnov test** to identify the most accurate segmentation method.  
@@ -51,7 +51,7 @@ This module, detailed in [`Test of segmentation.md`](Test%20of%20segmentation.md
 
 > **Problem:** How can clustering validity be ensured in large and heterogeneous cellular populations?
 
-The protocol described in [`Comparison of clusters.md`](Comparison%20of%20clusters.md) includes:
+The protocol described in [`Comparison of clusters.md`](protocols/Comparison%20of%20clusters.md) includes:
 
 - **Clusterability Assessment**: Use of the **Hopkins statistic** to validate the presence of inherent structure prior to clustering.  
 - **Dimensionality Reduction (PCA)**: Projection preserving 90% of protein variance.  
@@ -64,7 +64,7 @@ The protocol described in [`Comparison of clusters.md`](Comparison%20of%20cluste
 
 > **Problem:** How to statistically validate biological signatures and distinguish true co-expression from background noise in cyclic imaging?
 
-The protocol described in [`Marker correlation analysis.md`](Marker%20correlation%20analysis.md) focuses on:
+The protocol described in [`Marker correlation analysis.md`](protocols/Marker%20correlation%20analysis.md) focuses on:
 
 * **Multi-Parametric Correlation**: Comparative analysis using **Pearson**, **Spearman**, and **Kendall** coefficients to evaluate both linear and non-linear relationships between markers.
 * **Robustness to Artifacts**: Use of rank-based correlations to minimize the impact of fluorescence saturation and non-specific background noise frequently encountered in MACSima data.
@@ -77,7 +77,7 @@ The protocol described in [`Marker correlation analysis.md`](Marker%20correlatio
 
 > **Problem:** How to quantify marker expression levels and assess cellular heterogeneity across distinct biomarker populations?
 
-The protocol described in [`Analysis of Cellular Heterogeneity by Cyclic Imaging (MACSima).md`](Analysis%20of%20Cellular%20Heterogeneity%20by%20Cyclic%20Imaging%20(MACSima).md) focuses on:
+The protocol described in [`Analysis of Cellular Heterogeneity by Cyclic Imaging (MACSima).md`](protocols/Analysis%20of%20Cellular%20Heterogeneity%20by%20Cyclic%20Imaging%20(MACSima).md) focuses on:
 
 - **Population Filtering**: Identification of positive cells by establishing baseline expression thresholds (values > 0) to isolate expressing populations.
 - **Intensity Quantification**: Measurement of the average signal intensity per cell to evaluate marker quality, overall expression levels, and signal homogeneity.
@@ -91,7 +91,7 @@ The protocol described in [`Analysis of Cellular Heterogeneity by Cyclic Imaging
 
 > **Problem:** How can we determine whether protein marker expression is proportional to cell volume or indicative of a size-independent phenotypic state?
 
-The protocol described in [`Comparative Analysis between Marker Intensity and Cell Size.md`](Comparative%20Analysis%20between%20Marker%20Intensity%20and%20Cell%20Size.md) focuses on:
+The protocol described in [`Comparative Analysis between Marker Intensity and Cell Size.md`](protocols/Comparative%20Analysis%20between%20Marker%20Intensity%20and%20Cell%20Size.md) focuses on:
 
 * **Statistical Evaluation**: Calculation of **Pearson correlation** coefficients and p-values to assess the linear relationship between marker intensity and cell size.
 * **Predictive Modeling**: Application of **simple linear regression** to quantify the direct influence and predictive power of specific markers on cellular morphology.

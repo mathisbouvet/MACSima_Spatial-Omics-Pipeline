@@ -108,6 +108,9 @@ If the $H$ score is greater than 0.75, the data is considered to have a clusteri
 
 ```python
 def hopkins_statistic(X, m_ratio=0.1):
+    if not isinstance(X, pd.DataFrame):
+        X = pd.DataFrame(X)
+
     d = X.shape[1]
     n = len(X)
     m = int(m_ratio * n)
@@ -126,9 +129,6 @@ def hopkins_statistic(X, m_ratio=0.1):
 ### 1.b Evaluation metric
 
 
-
-
-
 | Metric | Description | Formula | Interpretation |
 | :--- | :--- | :--- | :--- |
 | **Silhouette (S)** | Measures internal cohesion and separation from neighbors. | $$s(i) = \frac{b(i) - a(i)}{\max(a(i), b(i))}$$ | **Close to 1**: Excellent<br>**Close to 0**: Overlapping clusters<br>**Negative**: Assignment error |
@@ -136,11 +136,12 @@ def hopkins_statistic(X, m_ratio=0.1):
 | **Calinski-Harabasz (CH)** | Ratio of between-cluster variance to within-cluster variance. | $$CH = \frac{SS_B}{SS_W} \times \frac{N - k}{k - 1}$$ | **Higher is better**<br>Favors clear separation and compactness. |
 <br>
 
-> **Technical note** : To calculate the final Global Score in the benchmark, the Davies-Bouldin index is inverted. This harmonizes the criteria so that, across all three metrics, a higher value consistently signifies better partitioning.
+> **Technical note** : To calculate the final Global Score in the benchmark, the Davies-Bouldin index is inverted. This harmonizes the criteria so that, across all three metrics, a higher value consistently signifies better partitioning. Additionally, DBSCAN may label points as noise (index -1) — these are excluded before computing any metric, as the indices require at least two valid clusters.
 
 ```python
 def evaluate_clustering(X, labels):
-    if len(set(labels)) <= 1:
+    unique = set(labels) - {-1}
+    if len(unique) <= 1:
         return np.nan, np.nan, np.nan
 
     return (
@@ -152,14 +153,20 @@ def evaluate_clustering(X, labels):
 
 #### Stability (ARI)
 
-The data is resampled using 80% bootstrapping to compare the results. This measures the similarity between two partitionings while adjusting for chance.
+The data is resampled using 80% bootstrapping across multiple runs. Rather than naively truncating label arrays, which would compare labels from different cells, each run tracks the indices of the sampled cells. The ARI is then computed only on cells that appear in both runs, ensuring a meaningful comparison between partitionings while adjusting for chance.
 
 ```python
 def compute_stability(X, model, n_runs=5):
+    if not isinstance(X, np.ndarray):
+        X = np.array(X)
+
+    n = len(X)
     labels_list = []
+    indices_list = []
 
     for i in range(n_runs):
-        X_sample = resample(X, n_samples=int(0.8 * len(X)), random_state=42 + i)
+        idx = resample(np.arange(n), n_samples=int(0.8 * n), random_state=42 + i, replace=False)
+        X_sample = X[idx]
 
         if isinstance(model, GaussianMixture):
             labels = model.fit(X_sample).predict(X_sample)
@@ -167,18 +174,23 @@ def compute_stability(X, model, n_runs=5):
             labels = model.fit_predict(X_sample)
 
         labels_list.append(labels)
+        indices_list.append(idx)
 
     ari_scores = []
     for i in range(len(labels_list)):
         for j in range(i + 1, len(labels_list)):
-            min_len = min(len(labels_list[i]), len(labels_list[j]))
+            common = np.intersect1d(indices_list[i], indices_list[j])
+            if len(common) < 2:
+                continue
+            pos_i = np.where(np.isin(indices_list[i], common))[0]
+            pos_j = np.where(np.isin(indices_list[j], common))[0]
             ari = adjusted_rand_score(
-                labels_list[i][:min_len],
-                labels_list[j][:min_len]
+                labels_list[i][pos_i],
+                labels_list[j][pos_j]
             )
             ari_scores.append(ari)
 
-    return np.mean(ari_scores)
+    return np.mean(ari_scores) if ari_scores else np.nan
 ```
 
 ### 1.c Automatic K calculation
@@ -224,7 +236,7 @@ def find_best_k(X, k_range):
 ### 2.a Data loading and normalization
 
 ```python
-data = pd.read_csv("[Cluster].csv")
+data = pd.read_csv("[Data].csv")
 X = data.select_dtypes(include=['float64', 'int64'])
 
 hopkins_before = hopkins_statistic(X)
@@ -234,38 +246,54 @@ X_scaled = scaler.fit_transform(X)
 
 hopkins_after = hopkins_statistic(pd.DataFrame(X_scaled, columns=X.columns))
 
-print(f'Hopkins forward : {hopkins_before:.3f}')
-print(f'Hopkins after : {hopkins_after:.3f}')
+print(f'Hopkins avant : {hopkins_before:.3f}')
+print(f'Hopkins après : {hopkins_after:.3f}')
 
-X_best = X_scaled if hopkins_after > hopkins_before else X
+X_best = X_scaled if hopkins_after > hopkins_before else X.values
 ```
 ### 2.b Data reduction (PCA) and k selection
 
 Once the Hopkins test has validated the presence of clusters, the data is simplified. We compress the markers to retain only those that explain 90% of the variance. This allows us to eliminate background sensor noise before proceeding to computationally intensive models.
 
 ```python
-#PCA
+# DIMENSION REDUCTION
 pca = PCA(n_components=0.9)
 X_reduced = pca.fit_transform(X_best)
 
-#Choix de k 
+print(f"📐 PCA components retained : {pca.n_components_} (90% of variance explained)")
+
+# K SELECTION
 k_range = range(2, 10)
 optimal_k, k_results = find_best_k(X_reduced, k_range)
 
-print(f"\n👉 optimal k detected : {optimal_k}")
+print(f"\n👉 Optimal k detected : {optimal_k}")
 ```
 
 ### 2.c Benchmarking of models
 
-We launch the competition between the algorithms: KMeabs, Agglomerative, Spectral, GMM, DBSCAN.
+We benchmark five clustering algorithms, each with a fundamentally different approach to partitioning the data:
+
+- **KMeans** assigns each cell to the nearest centroid by minimizing intra-cluster variance. Fast and effective on globular, well-separated clusters.
+- **Agglomerative** builds a hierarchy of clusters bottom-up by successively merging the closest pairs. Well-suited for non-spherical structures and does not require initialization.
+- **Spectral** projects the data into a lower-dimensional graph-based representation before clustering. Particularly effective when clusters are non-convex or entangled.
+- **GMM** (Gaussian Mixture Model) models the data as a mixture of Gaussian distributions, assigning probabilistic memberships to each cell. More flexible than KMeans as it handles ellipsoidal cluster shapes.
+- **DBSCAN** is a density-based algorithm that identifies clusters as high-density regions separated by low-density areas. Unlike the others, it does not require specifying k and naturally handles noise by labeling low-density points as outliers. Its search radius (`eps`) is estimated automatically from the data after PCA reduction to avoid scale artifacts.
 
 ```python
+# Automatic eps estimation for DBSCAN using k-distance elbow method
+neighbors = NearestNeighbors(n_neighbors=5).fit(X_reduced)
+distances, _ = neighbors.kneighbors(X_reduced)
+k_distances = np.sort(distances[:, -1])
+eps_auto = float(np.percentile(k_distances, 90))
+
+print(f"📐 DBSCAN eps estimated : {eps_auto:.3f}")
+
 clustering_methods = {
     'KMeans': KMeans(n_clusters=optimal_k, random_state=42),
     'Agglomerative': AgglomerativeClustering(n_clusters=optimal_k),
     'Spectral': SpectralClustering(n_clusters=optimal_k, affinity='nearest_neighbors', random_state=42),
     'GMM': GaussianMixture(n_components=optimal_k, random_state=42),
-    'DBSCAN': DBSCAN(eps=0.5, min_samples=5)
+    'DBSCAN': DBSCAN(eps=eps_auto, min_samples=5)
 }
 ```
 <h2 style="color: #000000; border-bottom: 1px solid #333; font-family: Georgia, serif;  font-weight: normal; padding-bottom: 5px; margin-top: 35px;">
@@ -275,25 +303,30 @@ clustering_methods = {
 
 ```python
 results = []
+
 for name, model in clustering_methods.items():
+    print(f"⏳ Running {name}...")
+
     try:
         if name == "GMM":
             labels = model.fit(X_reduced).predict(X_reduced)
         else:
             labels = model.fit_predict(X_reduced)
+
         sil, db, ch = evaluate_clustering(X_reduced, labels)
         stability = compute_stability(X_reduced, model)
+        print(f"✅ {name} done.")
 
     except Exception as e:
-        print(f"Erreur {name}: {e}")
+        print(f"❌ Error {name}: {e}")
         sil, db, ch, stability = np.nan, np.nan, np.nan, np.nan
 
     results.append({
-        "Méthode": name,
+        "Method": name,
         "Silhouette": sil,
         "Davies-Bouldin": db,
         "Calinski-Harabasz": ch,
-        "Stabilité (ARI)": stability
+        "Stability (ARI)": stability
     })
 
 results_df = pd.DataFrame(results)
@@ -303,37 +336,42 @@ results_df = pd.DataFrame(results)
 </h2>
 
 ```python
+import matplotlib.pyplot as plt
+import numpy as np
+
 plt.style.use('dark_background')
 
-methods = results_df['Méthode']
+methods = results_df['Method']
 x = np.arange(len(methods))
-width = 0.25 
+width = 0.25
 
 fig, ax1 = plt.subplots(figsize=(12, 7))
 fig.patch.set_facecolor('#000000')
 ax1.set_facecolor('#050505')
 
-# First axis Y: Calinski-Harabasz
+# First Y axis : Calinski-Harabasz
 ch_values = results_df['Calinski-Harabasz'].fillna(0)
-rects1 = ax1.bar(x - width, ch_values, width, 
+rects1 = ax1.bar(x - width, ch_values, width,
                  label='Calinski-Harabasz', color='#31905e', alpha=0.8)
-ax1.set_ylabel('Calinski-Harabasz (↑ mieux)', color='white', fontsize=12)
+
+ax1.set_ylabel('Calinski-Harabasz (↑ better)', color='white', fontsize=12)
 ax1.tick_params(axis='y', labelcolor='white')
 ax1.set_ylim(0, ch_values.max() * 1.2 if ch_values.max() > 0 else 100)
 
-# Second axis Y: Silhouette & Davies-Bouldin
+# Second Y axis : Silhouette & Davies-Bouldin
 ax2 = ax1.twinx()
 sil_values = results_df['Silhouette'].fillna(0)
 db_values = results_df['Davies-Bouldin'].fillna(0)
-rects2 = ax2.bar(x, sil_values, width, 
+
+rects2 = ax2.bar(x, sil_values, width,
                  label='Silhouette', color='#9381cf', alpha=0.8)
-rects3 = ax2.bar(x + width, db_values, width, 
+rects3 = ax2.bar(x + width, db_values, width,
                  label='Davies-Bouldin', color='#d67b6f', hatch='//', alpha=0.8)
+
 ax2.set_ylabel('Silhouette (↑) & Davies-Bouldin (↓)', color='white', fontsize=12)
 ax2.tick_params(axis='y', labelcolor='white')
 ax2.set_ylim(0, max(sil_values.max(), db_values.max()) * 1.2 if max(sil_values.max(), db_values.max()) > 0 else 1.5)
 
-# Legends
 plt.title("Comparison of Clustering Scores", color='white', fontsize=15, pad=20)
 ax1.set_xticks(x)
 ax1.set_xticklabels(methods, color='white')
@@ -346,30 +384,76 @@ plt.grid(axis='y', linestyle='--', alpha=0.2)
 plt.tight_layout()
 plt.show()
 
-# Calculating the best method
-
 scaler = MinMaxScaler()
 
-scores_to_rank = results_df[['Silhouette', 'Davies-Bouldin', 'Calinski-Harabasz', 'Stabilité (ARI)']].copy()
-scores_to_rank = scores_to_rank.fillna(0) 
+scores_to_rank = results_df[['Silhouette', 'Davies-Bouldin', 'Calinski-Harabasz', 'Stability (ARI)']].copy()
+scores_to_rank = scores_to_rank.fillna(0)
 
-# Beware of DB inversion !
-
+# DB is inverted so that higher is consistently better across all metrics
 scores_to_rank['Davies-Bouldin'] = -scores_to_rank['Davies-Bouldin']
 
-# Standardization
+# Normalization between 0 and 1 so each metric carries equal weight
 scores_scaled = scaler.fit_transform(scores_to_rank)
-results_df['Score_Global'] = scores_scaled.mean(axis=1)
+results_df['Global_Score'] = scores_scaled.mean(axis=1)
 
-best_method = results_df.loc[results_df['Score_Global'].idxmax(), 'Méthode']
+best_method = results_df.loc[results_df['Global_Score'].idxmax(), 'Method']
 
 print("\n--- Summary table ---")
-print(results_df[['Méthode', 'Silhouette', 'Davies-Bouldin', 'Score_Global']].to_string(index=False))
+print(results_df[['Method', 'Silhouette', 'Davies-Bouldin', 'Global_Score']].to_string(index=False))
 
-print(f"\n The recommended algorithm for your MACSima data is : {best_method}")
+print(f"\n🏆 The recommended algorithm for your MACSima data is : {best_method}")
 
 plt.style.use('default')
 ```
 
 The absence of data for the DBSCAN algorithm is due to its fundamental operational difference compared to centroid based models (such as KMeans). Unlike the latter, which force every point into a cluster, DBSCAN is a density based algorithm. It relies on two crucial parameters: the search radius (eps) and the minimum number of points (min_samples).
 If these parameters are too restrictive relative to the spatial distribution of the data especially following Dimensionality Reduction (PCA), which alters distances the algorithm may classify all points as 'noise' (outliers). Mathematically, if no clusters are formed or if only a single global group is identified, validation metrics (Silhouette, Davies-Bouldin, Calinski-Harabasz) cannot be calculated, as they require the comparison of at least two distinct partitions. In the context of tissue biology, this frequently occurs when cell density is too heterogeneous to be captured by a single, fixed search radius.
+
+<h2 style="color: #000000; border-bottom: 1px solid #333; font-family: Georgia, serif;  font-weight: normal; padding-bottom: 5px; margin-top: 35px;">
+5. Marker Expression Heatmap
+</h2>
+
+Once the optimal clustering algorithm has been identified, a heatmap is generated to interpret the biological meaning of each cluster. Each row represents a marker (protein) and each column a cluster. The values displayed correspond to the mean expression level of each marker within each cluster, computed on the original (non-PCA) data to preserve biological interpretability.
+This visualization allows for the identification of cluster-specific protein signatures a key step in phenotyping cell populations from MACSima cyclic imaging data.
+
+```python
+# ------------------- HEATMAP -------------------
+import seaborn as sns
+
+# Ajouter les labels au DataFrame original
+df_heatmap = X.copy()
+df_heatmap['Cluster'] = best_labels
+
+# Exclure le bruit DBSCAN si présent
+df_heatmap = df_heatmap[df_heatmap['Cluster'] != -1]
+
+# Moyenne des marqueurs par cluster
+cluster_means = df_heatmap.groupby('Cluster').mean()
+
+plt.style.use('dark_background')
+fig, ax = plt.subplots(figsize=(14, 6))
+fig.patch.set_facecolor('#000000')
+ax.set_facecolor('#050505')
+
+sns.heatmap(
+    cluster_means.T,
+    ax=ax,
+    cmap='magma',
+    annot=True,
+    fmt='.2f',
+    linewidths=0.5,
+    linecolor='#222',
+    cbar_kws={'label': 'Mean Expression'}
+)
+
+ax.set_title(f"Marker Expression per Cluster — {best_method}", 
+             color='white', fontsize=14, pad=15)
+ax.set_xlabel('Cluster', color='white', fontsize=12)
+ax.set_ylabel('Marker', color='white', fontsize=12)
+ax.tick_params(colors='white')
+plt.colorbar(ax.collections[0]).set_label('Mean Expression', color='white')
+plt.tight_layout()
+plt.show()
+
+plt.style.use('default')
+````
