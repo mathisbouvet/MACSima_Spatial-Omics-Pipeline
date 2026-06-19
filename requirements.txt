@@ -1,0 +1,11 @@
+pandas
+numpy
+scipy
+matplotlib
+seaborn
+scikit-learn
+scikit-image
+statsmodels
+opencv-python
+read-roi
+umap-learn
