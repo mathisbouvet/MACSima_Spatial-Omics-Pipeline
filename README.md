@@ -28,6 +28,12 @@ The workflow is structured into two main components: segmentation quality contro
 
 > **Data Origin**: Raw multiplex imaging data is acquired on the MACSima platform via **MACiQView**, then exported and processed through the Python pipelines described below.
 
+<div align="center">
+
+![Pipeline Architecture](images/home.png)
+
+</div>
+
 ## Table of Contents
 - [Pipeline Architecture](#pipeline-architecture)
   - [I. Segmentation Quality Control](#i-segmentation-quality-control)
@@ -40,6 +46,7 @@ The workflow is structured into two main components: segmentation quality contro
 
 ### I. Segmentation Quality Control
 
+[![Tests](https://github.com/mathisbouvet/macsima-qc/actions/workflows/tests.yml/badge.svg)](https://github.com/mathisbouvet/macsima-qc/actions/workflows/tests.yml)
 [![PyPI](https://img.shields.io/pypi/v/macsima-qc.svg)](https://pypi.org/project/macsima-qc/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://github.com/mathisbouvet/macsima-qc/blob/main/LICENSE)
 
@@ -51,6 +58,13 @@ This module, detailed in [`01_segmentation_qc.md`](protocols/01_segmentation_qc.
 - **Fidelity Analysis**: Comparative evaluation using the **Kolmogorov–Smirnov test** to identify the most accurate segmentation method.  
 - **Isolation Forest**: Detection of artefacts and aberrant segmentations through multidimensional anomaly detection.  
 - **Recommendation Engineering**: Application of **Mann–Whitney U tests** to guide parameter optimization (e.g., smoothing, sensitivity).
+
+<table>
+<tr>
+<td width="50%"><img src="notebooks/segmentation/figures/kde_comparative_distributions.png" alt="Comparative KDE distributions across segmentation methods"></td>
+<td width="50%"><img src="notebooks/segmentation/figures/anomaly_scores_distribution.png" alt="Distribution of Isolation Forest anomaly scores"></td>
+</tr>
+</table>
 
 📦 Packaged as **[`macsima-qc`](https://github.com/mathisbouvet/macsima-qc)**, available on PyPI:
 
